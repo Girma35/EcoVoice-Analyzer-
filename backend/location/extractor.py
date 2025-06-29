@@ -1,7 +1,7 @@
 import re
 import geocoder
 from geopy.geocoders import Nominatim
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 import asyncio
 import time
 
@@ -345,20 +345,3 @@ class LocationExtractor:
                     continue
         
         return None
-    
-    async def test_geocoding(self, test_locations: list) -> Dict[str, Any]:
-        """Test geocoding with a list of locations for debugging."""
-        
-        results = {}
-        
-        for location in test_locations:
-            print(f"\n🧪 Testing: '{location}'")
-            result = await self.extract_location(location)
-            results[location] = result
-            
-            if result["latitude"] and result["longitude"]:
-                print(f"✅ Success: {result['address']}")
-            else:
-                print(f"❌ Failed: {result.get('error', 'No location found')}")
-        
-        return results
