@@ -1,41 +1,46 @@
-import whisper
-import torch
+import speech_recognition as sr
 import tempfile
 import os
 from typing import Optional
 import asyncio
+from pydub import AudioSegment
+import io
 
 class VoiceRecognizer:
     """
-    Audio transcription service using OpenAI Whisper.
+    Audio transcription service using SpeechRecognition library.
     
-    Converts WAV audio files to text transcriptions with high accuracy
-    and multilingual support.
+    Converts audio files to text transcriptions using multiple
+    cloud-based speech recognition services as fallbacks.
     """
     
-    def __init__(self, model_size: str = "base"):
-        """
-        Initialize Whisper model.
-        
-        Args:
-            model_size: Whisper model size ('tiny', 'base', 'small', 'medium', 'large')
-        """
-        self.model_size = model_size
-        self.model = None
-        self.service_name = f"OpenAI Whisper ({model_size})"
+    def __init__(self):
+        """Initialize speech recognition with multiple service options."""
+        self.recognizer = sr.Recognizer()
+        self.service_name = "SpeechRecognition (Multi-Service)"
         
         # Supported audio formats
-        self.supported_formats = ['.wav', '.mp3', '.m4a', '.flac']
+        self.supported_formats = ['.wav', '.mp3', '.m4a', '.flac', '.webm']
         
-        # Load model on first use for better startup performance
-        self._model_loaded = False
+        # Service priority order (free services first)
+        self.services = [
+            ('google', 'Google Speech Recognition'),
+            ('sphinx', 'CMU Sphinx (Offline)'),
+            ('wit', 'Wit.ai'),
+        ]
+        
+        # Configure recognizer settings
+        self.recognizer.energy_threshold = 300
+        self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.pause_threshold = 0.8
+        self.recognizer.operation_timeout = 10
     
     async def transcribe(self, audio_file_path: str) -> str:
         """
-        Transcribe audio file to text.
+        Transcribe audio file to text using multiple services as fallbacks.
         
         Args:
-            audio_file_path: Path to audio file (.wav format)
+            audio_file_path: Path to audio file
             
         Returns:
             Transcribed text
@@ -43,7 +48,7 @@ class VoiceRecognizer:
         Raises:
             FileNotFoundError: If audio file doesn't exist
             ValueError: If audio format is not supported
-            RuntimeError: If transcription fails
+            RuntimeError: If transcription fails with all services
         """
         
         # Validate file existence
@@ -56,87 +61,120 @@ class VoiceRecognizer:
             raise ValueError(f"Unsupported audio format: {file_ext}. Supported: {self.supported_formats}")
         
         try:
-            # Load model if not already loaded
-            if not self._model_loaded:
-                await self._load_model()
+            # Convert audio to WAV format if needed
+            wav_path = await self._ensure_wav_format(audio_file_path)
             
-            # Perform transcription in thread pool to avoid blocking
-            result = await asyncio.to_thread(self._transcribe_sync, audio_file_path)
+            # Load audio file
+            with sr.AudioFile(wav_path) as source:
+                # Adjust for ambient noise
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                # Record the audio
+                audio_data = self.recognizer.record(source)
             
-            # Extract text from result
-            if isinstance(result, dict) and 'text' in result:
-                transcription = result['text'].strip()
+            # Try each service until one succeeds
+            last_error = None
+            for service_key, service_name in self.services:
+                try:
+                    result = await self._transcribe_with_service(audio_data, service_key)
+                    if result and result.strip():
+                        self.service_name = service_name
+                        return result.strip()
+                except Exception as e:
+                    last_error = e
+                    print(f"Service {service_name} failed: {str(e)}")
+                    continue
+            
+            # If all services failed
+            raise RuntimeError(f"All transcription services failed. Last error: {str(last_error)}")
+            
+        except Exception as e:
+            if isinstance(e, (FileNotFoundError, ValueError, RuntimeError)):
+                raise
             else:
-                transcription = str(result).strip()
-            
-            if not transcription:
-                raise RuntimeError("Transcription resulted in empty text")
-            
-            return transcription
-            
-        except Exception as e:
-            raise RuntimeError(f"Transcription failed: {str(e)}")
+                raise RuntimeError(f"Transcription failed: {str(e)}")
+        
+        finally:
+            # Clean up temporary WAV file if created
+            if 'wav_path' in locals() and wav_path != audio_file_path and os.path.exists(wav_path):
+                try:
+                    os.unlink(wav_path)
+                except:
+                    pass
     
-    async def _load_model(self):
-        """Load Whisper model asynchronously."""
+    async def _ensure_wav_format(self, audio_file_path: str) -> str:
+        """Convert audio file to WAV format if needed."""
+        
+        file_ext = os.path.splitext(audio_file_path)[1].lower()
+        
+        # If already WAV, return as-is
+        if file_ext == '.wav':
+            return audio_file_path
         
         try:
-            # Check if CUDA is available for GPU acceleration
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Convert to WAV using pydub
+            audio = AudioSegment.from_file(audio_file_path)
             
-            # Load model in thread pool to avoid blocking
-            self.model = await asyncio.to_thread(
-                whisper.load_model, 
-                self.model_size, 
-                device=device
-            )
-            
-            self._model_loaded = True
-            print(f"Whisper model '{self.model_size}' loaded on {device}")
-            
+            # Create temporary WAV file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_wav:
+                audio.export(temp_wav.name, format='wav')
+                return temp_wav.name
+                
         except Exception as e:
-            raise RuntimeError(f"Failed to load Whisper model: {str(e)}")
+            raise RuntimeError(f"Audio format conversion failed: {str(e)}")
     
-    def _transcribe_sync(self, audio_file_path: str) -> dict:
-        """
-        Synchronous transcription method to be run in thread pool.
-        
-        Args:
-            audio_file_path: Path to audio file
-            
-        Returns:
-            Whisper transcription result
-        """
+    async def _transcribe_with_service(self, audio_data, service_key: str) -> str:
+        """Transcribe audio using specific service."""
         
         try:
-            # Configure transcription options
-            options = {
-                "language": None,  # Auto-detect language
-                "task": "transcribe",  # Transcribe (not translate)
-                "fp16": torch.cuda.is_available(),  # Use FP16 if GPU available
-                "verbose": False
-            }
+            if service_key == 'google':
+                # Google Speech Recognition (free tier)
+                result = await asyncio.to_thread(
+                    self.recognizer.recognize_google, 
+                    audio_data,
+                    language='en-US'
+                )
+                return result
+                
+            elif service_key == 'sphinx':
+                # CMU Sphinx (offline, lower accuracy but always available)
+                result = await asyncio.to_thread(
+                    self.recognizer.recognize_sphinx, 
+                    audio_data
+                )
+                return result
+                
+            elif service_key == 'wit':
+                # Wit.ai (requires API key in environment)
+                wit_key = os.getenv('WIT_AI_KEY')
+                if wit_key:
+                    result = await asyncio.to_thread(
+                        self.recognizer.recognize_wit,
+                        audio_data,
+                        key=wit_key
+                    )
+                    return result
+                else:
+                    raise ValueError("WIT_AI_KEY not found in environment")
             
-            # Perform transcription
-            result = self.model.transcribe(audio_file_path, **options)
-            
-            return result
-            
-        except Exception as e:
-            raise RuntimeError(f"Whisper transcription error: {str(e)}")
+            else:
+                raise ValueError(f"Unknown service: {service_key}")
+                
+        except sr.UnknownValueError:
+            raise RuntimeError("Could not understand audio")
+        except sr.RequestError as e:
+            raise RuntimeError(f"Service request failed: {str(e)}")
     
     def get_service_name(self) -> str:
-        """Get the name of the recognition service."""
+        """Get the name of the recognition service that was used."""
         return self.service_name
     
     def get_model_info(self) -> dict:
-        """Get information about the loaded model."""
+        """Get information about available services."""
         return {
-            "service": self.service_name,
-            "model_size": self.model_size,
-            "model_loaded": self._model_loaded,
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "supported_formats": self.supported_formats
+            "service": "SpeechRecognition Library",
+            "available_services": [name for _, name in self.services],
+            "supported_formats": self.supported_formats,
+            "current_service": self.service_name
         }
     
     async def transcribe_with_metadata(self, audio_file_path: str) -> dict:
@@ -147,71 +185,81 @@ class VoiceRecognizer:
             audio_file_path: Path to audio file
             
         Returns:
-            Dictionary with transcription, language, and confidence data
+            Dictionary with transcription and metadata
         """
         
         try:
-            # Load model if not already loaded
-            if not self._model_loaded:
-                await self._load_model()
+            # Get basic transcription
+            text = await self.transcribe(audio_file_path)
             
-            # Perform detailed transcription
-            result = await asyncio.to_thread(self._transcribe_with_details, audio_file_path)
+            # Get audio duration
+            duration = await self._get_audio_duration(audio_file_path)
             
             return {
-                "text": result.get("text", "").strip(),
-                "language": result.get("language", "unknown"),
-                "segments": result.get("segments", []),
-                "duration": self._get_audio_duration(audio_file_path),
-                "service": self.service_name
+                "text": text,
+                "service": self.service_name,
+                "duration": duration,
+                "confidence": "medium",  # SpeechRecognition doesn't provide confidence scores
+                "language": "en-US"
             }
             
         except Exception as e:
             raise RuntimeError(f"Detailed transcription failed: {str(e)}")
     
-    def _transcribe_with_details(self, audio_file_path: str) -> dict:
-        """Synchronous detailed transcription."""
-        
-        options = {
-            "language": None,
-            "task": "transcribe",
-            "fp16": torch.cuda.is_available(),
-            "verbose": True,
-            "word_timestamps": True
-        }
-        
-        result = self.model.transcribe(audio_file_path, **options)
-        return result
-    
-    def _get_audio_duration(self, audio_file_path: str) -> Optional[float]:
+    async def _get_audio_duration(self, audio_file_path: str) -> Optional[float]:
         """Get audio file duration in seconds."""
         
         try:
-            import librosa
-            duration = librosa.get_duration(filename=audio_file_path)
-            return round(duration, 2)
+            audio = AudioSegment.from_file(audio_file_path)
+            return round(len(audio) / 1000.0, 2)  # Convert milliseconds to seconds
         except Exception:
-            # Fallback - duration not critical for core functionality
             return None
     
     async def health_check(self) -> dict:
         """Check if the voice recognition service is functioning."""
         
         try:
-            # Try to load model if not loaded
-            if not self._model_loaded:
-                await self._load_model()
+            # Test basic functionality
+            test_successful = True
+            available_services = []
+            
+            for service_key, service_name in self.services:
+                try:
+                    if service_key == 'sphinx':
+                        # Sphinx is always available (offline)
+                        available_services.append(service_name)
+                    elif service_key == 'google':
+                        # Google requires internet connection
+                        available_services.append(service_name + " (requires internet)")
+                    elif service_key == 'wit':
+                        # Wit.ai requires API key
+                        if os.getenv('WIT_AI_KEY'):
+                            available_services.append(service_name)
+                        else:
+                            available_services.append(service_name + " (API key required)")
+                except:
+                    continue
             
             return {
-                "status": "healthy",
-                "service": self.service_name,
-                "model_loaded": self._model_loaded,
-                "gpu_available": torch.cuda.is_available()
+                "status": "healthy" if available_services else "limited",
+                "available_services": available_services,
+                "primary_service": self.service_name,
+                "supported_formats": self.supported_formats
             }
             
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
-                "service": self.service_name
+                "service": "SpeechRecognition"
             }
+    
+    def configure_service_priority(self, services: list):
+        """
+        Configure the priority order of speech recognition services.
+        
+        Args:
+            services: List of tuples (service_key, service_name)
+        """
+        self.services = services
+        print(f"Service priority updated: {[name for _, name in services]}")
