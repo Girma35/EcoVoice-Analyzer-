@@ -1,0 +1,16 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+cohere==4.37
+langchain==0.0.350
+langchain-community==0.0.1
+sqlalchemy==2.0.23
+aiosqlite==0.19.0
+openai-whisper==20231117
+torch==2.1.1
+torchaudio==2.1.1
+geocoder==1.38.1
+geopy==2.4.1
+requests==2.31.0
+pydantic==2.5.1
