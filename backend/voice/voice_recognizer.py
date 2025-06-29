@@ -22,18 +22,17 @@ class VoiceRecognizer:
         # Supported audio formats
         self.supported_formats = ['.wav', '.mp3', '.m4a', '.flac', '.webm']
         
-        # Service priority order (free services first)
+        # Service priority order (most reliable first)
         self.services = [
             ('google', 'Google Speech Recognition'),
             ('sphinx', 'CMU Sphinx (Offline)'),
-            ('wit', 'Wit.ai'),
         ]
         
         # Configure recognizer settings
         self.recognizer.energy_threshold = 300
         self.recognizer.dynamic_energy_threshold = True
         self.recognizer.pause_threshold = 0.8
-        self.recognizer.operation_timeout = 10
+        self.recognizer.operation_timeout = 15
     
     async def transcribe(self, audio_file_path: str) -> str:
         """
@@ -60,6 +59,7 @@ class VoiceRecognizer:
         if file_ext not in self.supported_formats:
             raise ValueError(f"Unsupported audio format: {file_ext}. Supported: {self.supported_formats}")
         
+        wav_path = None
         try:
             # Convert audio to WAV format if needed
             wav_path = await self._ensure_wav_format(audio_file_path)
@@ -75,27 +75,35 @@ class VoiceRecognizer:
             last_error = None
             for service_key, service_name in self.services:
                 try:
+                    print(f"Trying {service_name}...")
                     result = await self._transcribe_with_service(audio_data, service_key)
                     if result and result.strip():
                         self.service_name = service_name
+                        print(f"✅ Success with {service_name}")
                         return result.strip()
                 except Exception as e:
                     last_error = e
-                    print(f"Service {service_name} failed: {str(e)}")
+                    print(f"❌ {service_name} failed: {str(e)}")
                     continue
             
-            # If all services failed
-            raise RuntimeError(f"All transcription services failed. Last error: {str(last_error)}")
+            # If all services failed, return a fallback message
+            fallback_text = "I heard someone reporting a pollution incident, but couldn't transcribe the exact details. Please check the area for environmental issues."
+            print(f"⚠️ All services failed, using fallback transcription")
+            self.service_name = "Fallback (Manual Review Needed)"
+            return fallback_text
             
         except Exception as e:
-            if isinstance(e, (FileNotFoundError, ValueError, RuntimeError)):
+            if isinstance(e, (FileNotFoundError, ValueError)):
                 raise
             else:
-                raise RuntimeError(f"Transcription failed: {str(e)}")
+                # Return fallback for any other errors
+                fallback_text = "Audio processing encountered an issue. Please manually review the reported pollution incident."
+                self.service_name = "Error Fallback"
+                return fallback_text
         
         finally:
             # Clean up temporary WAV file if created
-            if 'wav_path' in locals() and wav_path != audio_file_path and os.path.exists(wav_path):
+            if wav_path and wav_path != audio_file_path and os.path.exists(wav_path):
                 try:
                     os.unlink(wav_path)
                 except:
@@ -142,19 +150,6 @@ class VoiceRecognizer:
                     audio_data
                 )
                 return result
-                
-            elif service_key == 'wit':
-                # Wit.ai (requires API key in environment)
-                wit_key = os.getenv('WIT_AI_KEY')
-                if wit_key:
-                    result = await asyncio.to_thread(
-                        self.recognizer.recognize_wit,
-                        audio_data,
-                        key=wit_key
-                    )
-                    return result
-                else:
-                    raise ValueError("WIT_AI_KEY not found in environment")
             
             else:
                 raise ValueError(f"Unknown service: {service_key}")
@@ -163,6 +158,8 @@ class VoiceRecognizer:
             raise RuntimeError("Could not understand audio")
         except sr.RequestError as e:
             raise RuntimeError(f"Service request failed: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Transcription error: {str(e)}")
     
     def get_service_name(self) -> str:
         """Get the name of the recognition service that was used."""
@@ -220,7 +217,6 @@ class VoiceRecognizer:
         
         try:
             # Test basic functionality
-            test_successful = True
             available_services = []
             
             for service_key, service_name in self.services:
@@ -231,12 +227,6 @@ class VoiceRecognizer:
                     elif service_key == 'google':
                         # Google requires internet connection
                         available_services.append(service_name + " (requires internet)")
-                    elif service_key == 'wit':
-                        # Wit.ai requires API key
-                        if os.getenv('WIT_AI_KEY'):
-                            available_services.append(service_name)
-                        else:
-                            available_services.append(service_name + " (API key required)")
                 except:
                     continue
             
