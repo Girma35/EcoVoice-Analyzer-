@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Mic, Upload, MessageSquare, MapPin, AlertTriangle, Building2, FileAudio, Loader2, Play, Store as Stop } from 'lucide-react';
+import { Mic, Upload, MessageSquare, MapPin, AlertTriangle, Building2, FileAudio, Loader2, Play, Square as Stop } from 'lucide-react';
 
 // API Configuration - Update this URL after deploying to Render
 const API_BASE_URL = 'https://pollution-analyzer-api.onrender.com';
