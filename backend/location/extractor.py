@@ -27,8 +27,10 @@ class LocationExtractor:
             r'\bnear\s+[A-Za-z\s]+(?:Park|School|Hospital|Mall|Center|Centre|Plaza|Station|Airport|Bridge|Library|University|College)\b',
             # City, State patterns
             r'\b[A-Za-z\s]+,\s*[A-Z]{2}\b',
-            # City names (common US cities)
-            r'\b(?:New York|Los Angeles|Chicago|Houston|Phoenix|Philadelphia|San Antonio|San Diego|Dallas|San Jose|Austin|Jacksonville|Fort Worth|Columbus|Charlotte|San Francisco|Indianapolis|Seattle|Denver|Washington|Boston|El Paso|Nashville|Detroit|Oklahoma City|Portland|Las Vegas|Memphis|Louisville|Baltimore|Milwaukee|Albuquerque|Tucson|Fresno|Sacramento|Mesa|Kansas City|Atlanta|Long Beach|Colorado Springs|Raleigh|Miami|Virginia Beach|Omaha|Oakland|Minneapolis|Tulsa|Arlington|Tampa|New Orleans|Wichita|Cleveland|Bakersfield|Aurora|Anaheim|Honolulu|Santa Ana|Riverside|Corpus Christi|Lexington|Stockton|Henderson|Saint Paul|St\. Paul|Cincinnati|Pittsburgh|Greensboro|Anchorage|Plano|Lincoln|Orlando|Irvine|Newark|Durham|Chula Vista|Toledo|Fort Wayne|St\. Petersburg|Laredo|Jersey City|Chandler|Madison|Lubbock|Scottsdale|Reno|Buffalo|Gilbert|Glendale|North Las Vegas|Winston-Salem|Chesapeake|Norfolk|Fremont|Garland|Irving|Hialeah|Richmond|Boise|Spokane|Baton Rouge)\b',
+            # City names (common cities worldwide)
+            r'\b(?:New York|Los Angeles|Chicago|Houston|Phoenix|Philadelphia|San Antonio|San Diego|Dallas|San Jose|Austin|Jacksonville|Fort Worth|Columbus|Charlotte|San Francisco|Indianapolis|Seattle|Denver|Washington|Boston|El Paso|Nashville|Detroit|Oklahoma City|Portland|Las Vegas|Memphis|Louisville|Baltimore|Milwaukee|Albuquerque|Tucson|Fresno|Sacramento|Mesa|Kansas City|Atlanta|Long Beach|Colorado Springs|Raleigh|Miami|Virginia Beach|Omaha|Oakland|Minneapolis|Tulsa|Arlington|Tampa|New Orleans|Wichita|Cleveland|Bakersfield|Aurora|Anaheim|Honolulu|Santa Ana|Riverside|Corpus Christi|Lexington|Stockton|Henderson|Saint Paul|St\. Paul|Cincinnati|Pittsburgh|Greensboro|Anchorage|Plano|Lincoln|Orlando|Irvine|Newark|Durham|Chula Vista|Toledo|Fort Wayne|St\. Petersburg|Laredo|Jersey City|Chandler|Madison|Lubbock|Scottsdale|Reno|Buffalo|Gilbert|Glendale|North Las Vegas|Winston-Salem|Chesapeake|Norfolk|Fremont|Garland|Irving|Hialeah|Richmond|Boise|Spokane|Baton Rouge|London|Paris|Berlin|Tokyo|Sydney|Toronto|Vancouver|Montreal|Rhine River|Thames|Seine|Danube|Nile|Amazon|Mississippi|Colorado River|Lahore|Karachi|Mumbai|Delhi|Beijing|Shanghai|Moscow|Istanbul|Cairo|Lagos|Nairobi|Cape Town|Rio de Janeiro|Buenos Aires|Mexico City|Lima|Bogota|Santiago|Brasilia)\b',
+            # Rivers and water bodies
+            r'\b(?:Rhine|Thames|Seine|Danube|Nile|Amazon|Mississippi|Colorado|Yangtze|Ganges|Indus|Mekong|Volga|Euphrates|Tigris)\s+River\b',
             # Coordinates (lat, lon)
             r'\b-?\d+\.?\d*\s*,\s*-?\d+\.?\d*\b',
             # Zip codes in addresses
@@ -272,7 +274,7 @@ class LocationExtractor:
                 }
     
     async def _fallback_geocoding(self, location_string: str) -> Dict[str, Optional[str]]:
-        """Fallback geocoding using geocoder library with multiple providers."""
+        """Fallback geocoding using geocoder library with correct API."""
         
         providers = [
             ('osm', 'OpenStreetMap'),
@@ -285,12 +287,17 @@ class LocationExtractor:
             try:
                 print(f"   🔄 Trying {provider_name}...")
                 
-                # Use asyncio.to_thread to make the blocking call async
-                result = await asyncio.to_thread(
-                    geocoder.geocode, 
-                    location_string, 
-                    provider=provider_key
-                )
+                # Use the correct geocoder API - each provider has its own method
+                if provider_key == 'osm':
+                    result = await asyncio.to_thread(geocoder.osm, location_string)
+                elif provider_key == 'arcgis':
+                    result = await asyncio.to_thread(geocoder.arcgis, location_string)
+                elif provider_key == 'bing':
+                    result = await asyncio.to_thread(geocoder.bing, location_string)
+                elif provider_key == 'google':
+                    result = await asyncio.to_thread(geocoder.google, location_string)
+                else:
+                    continue
                 
                 if result and result.latlng and len(result.latlng) >= 2:
                     geocoded_result = {
