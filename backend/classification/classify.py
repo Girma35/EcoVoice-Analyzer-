@@ -57,9 +57,8 @@ class PollutionAnalyzerLLM:
         prompt = self._build_analysis_prompt(text)
         
         try:
-            # Generate response using Cohere
+            # Generate response using Cohere with correct parameters
             response = self.client.generate(
-                model='command',
                 prompt=prompt,
                 max_tokens=800,
                 temperature=0.3,
@@ -75,7 +74,7 @@ class PollutionAnalyzerLLM:
             parsed_response["raw_response"] = {
                 "text": response.generations[0].text,
                 "meta": {
-                    "api_version": response.meta.api_version if hasattr(response, 'meta') else None,
+                    "api_version": getattr(response, 'api_version', None),
                     "model": "command"
                 }
             }
@@ -83,6 +82,7 @@ class PollutionAnalyzerLLM:
             return parsed_response
             
         except Exception as e:
+            print(f"Cohere API error: {str(e)}")
             # Fallback response in case of API failure
             return self._generate_fallback_response(text, str(e))
     
@@ -144,6 +144,7 @@ Response:
                 }
             
         except (json.JSONDecodeError, KeyError) as e:
+            print(f"JSON parsing error: {str(e)}")
             # Fallback parsing if JSON extraction fails
             return self._extract_from_text(response_text)
         
@@ -189,14 +190,37 @@ Response:
     def _generate_fallback_response(self, text: str, error: str) -> Dict[str, Any]:
         """Generate fallback response when API fails."""
         
+        # Try to extract pollution type from text using keywords
+        pollution_type = "environmental incident"
+        text_lower = text.lower()
+        
+        for p_type in self.pollution_types:
+            if any(keyword in text_lower for keyword in p_type.split()):
+                pollution_type = p_type
+                break
+        
+        # Check for specific pollution indicators
+        if any(word in text_lower for word in ['chemical', 'toxic', 'spill']):
+            pollution_type = "chemical spill"
+        elif any(word in text_lower for word in ['water', 'river', 'lake', 'stream']):
+            pollution_type = "water pollution"
+        elif any(word in text_lower for word in ['air', 'smoke', 'emission', 'fumes']):
+            pollution_type = "air pollution"
+        elif any(word in text_lower for word in ['waste', 'garbage', 'dump']):
+            pollution_type = "waste dumping"
+        elif any(word in text_lower for word in ['oil', 'petroleum']):
+            pollution_type = "oil spill"
+        elif any(word in text_lower for word in ['noise', 'loud', 'sound']):
+            pollution_type = "noise pollution"
+        
         return {
-            "pollution_type": "environmental incident",
-            "recommendation": "Unable to analyze pollution type due to service error. Contact local environmental authorities immediately.",
-            "responsible_agency": "Environmental Protection Agency (EPA)",
-            "severity_level": "unknown",
-            "immediate_actions": "Report to authorities and secure the area.",
-            "long_term_solution": "Follow up with environmental assessment once service is restored.",
-            "raw_response": {"error": error, "fallback": True}
+            "pollution_type": pollution_type,
+            "recommendation": f"Based on the description mentioning '{pollution_type}', immediate environmental assessment is recommended. Contact local authorities to investigate and implement appropriate cleanup measures.",
+            "responsible_agency": self._get_responsible_agency(pollution_type),
+            "severity_level": "medium",
+            "immediate_actions": "Report incident to environmental authorities and secure the affected area to prevent further contamination.",
+            "long_term_solution": "Conduct thorough environmental impact assessment and implement comprehensive remediation plan with regular monitoring.",
+            "raw_response": {"error": error, "fallback": True, "text_analysis": True}
         }
     
     def _generate_default_response(self) -> Dict[str, Any]:
