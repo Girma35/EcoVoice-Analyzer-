@@ -11,7 +11,8 @@ aiosqlite==0.19.0
 geocoder==1.38.1
 geopy==2.4.1
 requests==2.31.0
-pydantic==2.5.1
+pydantic==2.4.2  # changed from 2.5.1
+pydantic-core==2.10.1  # explicitly added
 psycopg2-binary==2.9.9
 speechrecognition==3.10.0
 pydub==0.25.1
