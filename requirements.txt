@@ -16,4 +16,3 @@ pydantic-core==2.10.1  # explicitly added
 psycopg2-binary==2.9.9
 speechrecognition==3.10.0
 pydub==0.25.1
-pyaudio==0.2.11
